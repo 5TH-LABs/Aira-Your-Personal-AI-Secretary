@@ -1,0 +1,14 @@
+
+begin;
+alter table office_records drop constraint office_records_kind_check;
+alter table office_records add constraint office_records_kind_check check(kind in ('site','contact','task','note','meeting','reminder','document','letter','contract','permit','report','attendance','payroll','staff','leave','subcontract','estimate','invoice','expense','payment','finding','announcement','rate','wage_policy'));
+create or replace function can_read_record(r public.office_records) returns boolean language sql stable security definer set search_path=public as $$select exists(select 1 from memberships m where m.company_id=r.company_id and m.user_id=auth.uid() and m.active and (m.role='owner' or case when r.kind='site' and m.role in ('staff','supervisor') then r.id=any(m.site_ids) when r.kind in ('staff','leave','wage_policy') and r.data->>'assigneeId'=auth.uid()::text then true when r.kind in ('payroll','wage_policy','payment_plan') then m.role='accountant' when r.kind in ('staff','leave') then m.role='office_manager' when m.role in ('office_manager','accountant') then true when r.site_id is not null and not r.site_id=any(m.site_ids) then false when r.site_id is null and r.kind not in ('site','announcement','rate') and coalesce(r.data->>'assigneeId','')<>auth.uid()::text then false when m.role='staff' then r.kind in ('task','note','attendance','report','document') and r.data->>'assigneeId'=auth.uid()::text else true end))$$;
+create function apply_wage_policy() returns trigger language plpgsql security definer set search_path=public as $$declare p office_records;begin
+ if new.kind='wage_policy' and coalesce(member_role(new.company_id),'') not in ('owner','accountant') and auth.role()<>'service_role' then raise exception 'Only owner or accountant can set wage policies';end if;
+ if new.kind='attendance' then select * into p from office_records where company_id=new.company_id and kind='wage_policy' and data->>'assigneeId'=new.data->>'assigneeId' and data->>'effectiveFrom'<=new.data->>'date' and deleted_at is null order by data->>'effectiveFrom' desc limit 1;
+ if found then new.data:=new.data||jsonb_build_object('rate',p.data->>'rate','otRate',p.data->>'otRate','policyId',p.id,'policyVersion',p.version,'calculatedTotal',round((new.data->>'hours')::numeric*(p.data->>'rate')::numeric+(new.data->>'overtime')::numeric*(p.data->>'otRate')::numeric,2)::text);
+ elsif coalesce(member_role(new.company_id),'') in ('staff','supervisor') then raise exception 'Configure an effective wage policy first';end if;end if;
+ if new.data ? 'assigneeId' and not exists(select 1 from memberships where company_id=new.company_id and user_id=(new.data->>'assigneeId')::uuid and active) then raise exception 'Assigned person is not an active company member';end if;
+ return new;end$$;
+create trigger wage_policy_values before insert or update on office_records for each row execute function apply_wage_policy();
+commit;

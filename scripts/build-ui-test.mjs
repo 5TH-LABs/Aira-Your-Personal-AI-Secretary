@@ -1,0 +1,2 @@
+import {spawn} from 'node:child_process';
+const child=spawn(process.execPath,['node_modules/expo/bin/cli','export','--platform','web','--max-workers','2','--clear','--output-dir','qa/cloud-ui'],{stdio:'inherit',env:{...process.env,EXPO_NO_DOTENV:'1',EXPO_PUBLIC_SUPABASE_URL:'http://127.0.0.1:8099',EXPO_PUBLIC_SUPABASE_ANON_KEY:'ui-test-public-key',EXPO_PUBLIC_API_URL:'http://127.0.0.1:8099'}});child.on('exit',code=>{process.exitCode=code||0;});

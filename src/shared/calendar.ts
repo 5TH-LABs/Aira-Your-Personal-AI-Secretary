@@ -1,0 +1,1 @@
+export function monthKey(value:Date|string=new Date()){const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Colombo',year:'numeric',month:'2-digit'}).formatToParts(new Date(value));return parts.find(p=>p.type==='year')!.value+'-'+parts.find(p=>p.type==='month')!.value;}

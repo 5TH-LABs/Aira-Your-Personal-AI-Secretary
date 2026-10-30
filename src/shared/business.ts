@@ -1,0 +1,66 @@
+import {z} from 'zod';
+import {Decimal} from 'decimal.js';
+import {amount,estimateTotal,wageTotal} from './finance.ts';
+import type {OfficeRecord,RecordKind} from './records.ts';
+export const day=z.string().refine(v=>/^\d{4}-\d{2}-\d{2}$/.test(v)&&!Number.isNaN(Date.parse(v))&&new Date(v).toISOString().slice(0,10)===v,'Use a valid YYYY-MM-DD date.');
+const text=z.string().trim().min(1).max(12000),money=z.union([z.string(),z.number()]).transform(String).refine(v=>{try{return amount(v).isFinite();}catch{return false;}},'Use a non-negative decimal.');
+const line=z.object({description:text,quantity:money,rate:money,unit:z.string().default('item'),delivered:money.optional()});
+const dated={due:day.optional()};
+const definitions:Partial<Record<RecordKind,z.ZodType>>={
+ rate:z.object({description:text,unit:text,rate:money,effectiveFrom:day}).passthrough(),wage_policy:z.object({assigneeId:text,effectiveFrom:day,rate:money,otRate:money}).passthrough(),
+ site:z.object({location:text,lead:z.string().default(''),progress:z.coerce.number().min(0).max(100).default(0)}).passthrough(),
+ contact:z.object({name:text,email:z.email().optional(),phone:z.string().optional()}).passthrough(),
+ task:z.object({assigneeId:text,body:text,due:day,status:z.enum(['draft','To do','In progress','Done']).default('draft'),dependencies:z.array(z.uuid()).default([])}).passthrough(),
+ note:z.object({body:text}).passthrough(),meeting:z.object({body:text,date:day,attendees:z.string().default('')}).passthrough(),
+ reminder:z.object({body:text,due:day,recipient:z.string().optional(),external:z.boolean().default(false),repeat:z.enum(['once','daily','weekly','monthly']).default('once')}).passthrough(),
+ letter:z.object({recipient:z.email(),body:text,subject:z.string().default(''),attachments:z.array(z.uuid()).max(10).default([]),threadId:z.string().optional(),inReplyTo:z.string().max(2000).optional(),references:z.string().max(4000).optional()}).passthrough(),
+ document:z.object({filename:text,mimeType:text,storagePath:text,category:z.enum(['Invoice','Delivery note','Contract','Permit','Report','Photo','Other']).default('Other'),text:z.string().default(''),pages:z.array(z.object({page:z.number().int().positive(),text:z.string()})).default([])}).passthrough(),
+ contract:z.object({source:text,obligations:text,...dated,penalties:z.string().default(''),citations:z.array(z.object({sourceId:z.uuid(),page:z.number().int().positive(),quote:z.string()})).default([])}).passthrough(),
+ permit:z.object({reference:text,expiry:day,issuer:z.string().default(''),notes:z.string().default(''),renewedFrom:z.uuid().optional()}).passthrough(),
+ report:z.object({date:day,progress:text,issues:z.string().default(''),photoIds:z.array(z.uuid()).default([])}).passthrough(),
+ attendance:z.object({assigneeId:text,staffName:text,date:day,hours:money,rate:money,overtime:money,otRate:money,correctionReason:z.string().optional()}).passthrough(),
+ payroll:z.object({attendanceIds:z.array(z.uuid()).min(1),periodStart:day,periodEnd:day,deductions:money.default('0'),employerContribution:money.default('0')}).passthrough(),
+ staff:z.object({name:text,role:text,startDate:day.optional(),contract:z.string().default(''),statutory:z.string().default(''),assigneeId:z.string().optional()}).passthrough(),
+ leave:z.object({assigneeId:text,from:day,to:day,reason:text}).passthrough(),
+ subcontract:z.object({contractor:text,milestone:text,amount:money,paid:money.default('0'),insuranceExpiry:day.optional(),bankReference:z.string().default('')}).passthrough(),
+ estimate:z.object({lines:z.array(line).min(1),revisionNote:z.string().default('')}).passthrough(),
+ invoice:z.object({counterparty:text,reference:text,direction:z.enum(['payable','receivable']).default('payable'),lines:z.array(line).min(1),amount:money,due:day.optional(),deliveryReference:z.string().default('')}).passthrough(),
+ expense:z.object({counterparty:text,reference:text,amount:money,date:day,category:text}).passthrough(),
+ payment_plan:z.object({invoiceId:z.uuid(),payee:text,amount:money,date:day,bankName:text,bankAccount:text,notes:z.string().default('')}).passthrough(),
+ payment:z.object({invoiceId:z.uuid(),amount:money,date:day,bankReference:text}).passthrough(),
+ finding:z.object({source:text,evidence:text,resolution:z.string().default(''),status:z.enum(['open','investigating','resolved']).default('open')}).passthrough(),
+ announcement:z.object({body:text,dependencies:z.array(z.uuid()).default([]),...dated}).passthrough()
+};
+export function validateData(kind:RecordKind,data:unknown):Record<string,any>{const schema=definitions[kind];if(!schema)throw Error('Unsupported record type.');return schema.parse(data) as Record<string,any>;}
+export function deriveRecord(kind:RecordKind,input:unknown,records:OfficeRecord[],siteId:string|null){const data=validateData(kind,input);if(kind==='reminder'&&data.external&&!z.email().safeParse(data.recipient).success)throw Error('External reminders need a recipient email.');
+ if(kind==='estimate'){data.calculatedTotal=estimateTotal(data.lines);}
+ if(kind==='attendance'){if(data.correctsId&&!data.correctionReason?.trim())throw Error('Explain the attendance correction.');const policy=records.filter(r=>r.kind==='wage_policy'&&!r.deletedAt&&r.data.assigneeId===data.assigneeId&&String(r.data.effectiveFrom)<=data.date).sort((a,b)=>String(b.data.effectiveFrom).localeCompare(String(a.data.effectiveFrom)))[0];if(policy){data.rate=String(policy.data.rate);data.otRate=String(policy.data.otRate);data.policyId=policy.id;data.policyVersion=policy.version;}if(amount(data.hours).plus(amount(data.overtime)).gt(24))throw Error('Work hours cannot exceed 24 per day.');data.calculatedTotal=wageTotal(data.hours,data.rate,data.overtime,data.otRate);}
+ if(kind==='payroll'){if(data.periodEnd<data.periodStart)throw Error('Payroll dates are reversed.');const rows=data.attendanceIds.map((id:string)=>records.find(r=>r.id===id&&r.kind==='attendance'&&!r.deletedAt));if(rows.some((r:OfficeRecord|undefined)=>!r||r.data.correctsId||r.siteId!==siteId||String(r.data.date)<data.periodStart||String(r.data.date)>data.periodEnd))throw Error('Payroll must use permitted attendance inside this period and site.');if(new Set(data.attendanceIds).size!==rows.length)throw Error('Attendance was included twice.');const total=rows.reduce((sum:Decimal,r:OfficeRecord)=>sum.plus(wageTotal(String(r.data.hours),String(r.data.rate),String(r.data.overtime),String(r.data.otRate))),new Decimal(0));if(amount(data.deductions).gt(total))throw Error('Deductions exceed gross wages.');data.gross=total.toFixed(2);data.net=total.minus(data.deductions).toFixed(2);data.totalCost=total.plus(data.employerContribution).toFixed(2);}
+ if(kind==='subcontract'){data.outstanding=amount(data.amount).minus(data.paid).toFixed(2);}
+ if(kind==='invoice'){data.calculatedTotal=estimateTotal(data.lines);data.issues=[];if(!amount(data.amount).eq(data.calculatedTotal))data.issues.push('Stated amount differs from line totals.');if(records.some(r=>r.kind==='invoice'&&String(r.data.reference).trim().toLowerCase()===data.reference.toLowerCase()&&String(r.data.counterparty).trim().toLowerCase()===data.counterparty.toLowerCase()&&!r.deletedAt))data.issues.push('Duplicate supplier/client invoice reference.');const difference=data.lines.reduce((sum:Decimal,l:any)=>l.delivered===undefined?sum:sum.plus(amount(l.quantity).minus(l.delivered).mul(l.rate)),new Decimal(0));data.deliveryVariance=difference.toFixed(2);if(!difference.isZero())data.issues.push('Recorded delivery quantities differ.');}
+ if(kind==='payment'||kind==='payment_plan'){const invoice=records.find(r=>r.id===data.invoiceId&&r.kind==='invoice'&&!r.deletedAt);if(!invoice||invoice.siteId!==siteId||invoice.data.posted!==true)throw Error('Select an accessible invoice in this site.');const paid=records.filter(r=>r.kind==='payment'&&r.data.invoiceId===invoice.id&&r.data.posted===true).reduce((s,r)=>s.plus(String(r.data.amount)),new Decimal(0));if(amount(data.amount).plus(paid).gt(String(invoice.data.amount)))throw Error('Payment exceeds the unpaid invoice balance.');data.direction=invoice.data.direction==='receivable'?'in':'out';}
+ if(kind==='report')for(const id of data.photoIds){const photo=records.find(r=>r.id===id&&r.kind==='document'&&!r.deletedAt);if(!photo||!String(photo.data.mimeType).startsWith('image/')||photo.siteId&&photo.siteId!==siteId)throw Error('Select accessible site photos for this report.');}
+ if(kind==='permit'&&data.renewedFrom){const original=records.find(r=>r.id===data.renewedFrom&&r.kind==='permit');if(!original||String(original.data.expiry)>=data.expiry)throw Error('Renewal expiry must be later than the original permit.');}
+ if(kind==='leave'&&data.to<data.from)throw Error('Leave dates are reversed.');
+ if(kind==='task'||kind==='announcement'){for(const id of data.dependencies){if(!records.some(r=>r.id===id&&r.kind==='task'&&!r.deletedAt))throw Error('Task dependency is unavailable.');}}
+ // Approval/execution metadata is never supplied by a form or language model.
+ delete data.posted;delete data.approved;delete data.executionStatus;return data;
+}
+export function auditRecords(records:OfficeRecord[]){
+ const active=records.filter(r=>!r.deletedAt),findings:{recordId:string;title:string;evidence:string}[]=[];
+ for(const r of active){
+  if(r.kind==='invoice'){try{const derived=deriveRecord('invoice',r.data,active.filter(x=>x.id!==r.id),r.siteId);for(const issue of derived.issues)findings.push({recordId:r.id,title:issue,evidence:r.title+' · '+String(r.data.reference)});}catch{findings.push({recordId:r.id,title:'Invoice fields need correction',evidence:r.title+' contains incomplete or invalid quantities, rates or amounts. Review its original before posting.'});}}
+  if(r.kind==='expense'&&!r.data.documentId)findings.push({recordId:r.id,title:'Expense has no supporting document',evidence:r.title});
+  if(r.kind==='payment'&&!r.data.bankReference)findings.push({recordId:r.id,title:'Payment reference missing',evidence:r.title});
+  if(['expense','payment'].includes(r.kind)){const reference=r.kind==='payment'?r.data.bankReference:r.data.reference;const duplicates=reference&&active.filter(other=>other.id!==r.id&&other.kind===r.kind&&String(other.data[r.kind==='payment'?'bankReference':'reference']||'').trim().toLowerCase()===String(reference).trim().toLowerCase()&&(r.kind==='payment'||other.data.counterparty===r.data.counterparty));if(duplicates&&duplicates.length)findings.push({recordId:r.id,title:'Repeated transaction reference',evidence:r.title+' · '+reference+' also appears in '+duplicates.map(other=>other.title).join(', ')});}
+  if(r.kind==='expense'&&r.data.posted===true){const peers=active.filter(other=>other.id!==r.id&&other.kind==='expense'&&other.data.posted===true&&other.siteId===r.siteId&&other.data.category===r.data.category).map(other=>amount(String(other.data.amount))).sort((a,b)=>a.comparedTo(b));if(peers.length>=3){const mid=Math.floor(peers.length/2),median=peers.length%2?peers[mid]:peers[mid-1].plus(peers[mid]).div(2);if(median.gt(0)&&amount(String(r.data.amount)).gt(median.mul(3)))findings.push({recordId:r.id,title:'Amount above peer baseline',evidence:r.title+' · Rs. '+amount(String(r.data.amount)).toFixed(2)+' exceeds 3 × the Rs. '+median.toFixed(2)+' median of '+peers.length+' other approved '+r.data.category+' expenses in this site. This review signal does not establish an error or fraud.'});}}
+ }
+ return findings;
+}
+export function financialSummary(records:OfficeRecord[]){
+ const posted=records.filter(r=>!r.deletedAt&&r.data.posted===true),total=(kind:RecordKind)=>posted.filter(r=>r.kind===kind).reduce((s,r)=>s.plus(String(r.data.amount||'0')),new Decimal(0));
+ const cash=(direction:string)=>posted.filter(r=>r.kind==='payment'&&posted.some(i=>i.kind==='invoice'&&i.id===r.data.invoiceId&&i.data.direction===direction)).reduce((sum,r)=>sum.plus(String(r.data.amount)),new Decimal(0)).toFixed(2);
+ const projects=[...new Set(posted.filter(r=>['expense','payroll','invoice','payment'].includes(r.kind)).map(r=>r.siteId))].map(siteId=>{const rows=posted.filter(r=>r.siteId===siteId),sum=(kind:RecordKind,field='amount',direction?:string)=>rows.filter(r=>r.kind===kind&&(!direction||r.data.direction===direction)).reduce((value,r)=>value.plus(String(r.data[field]||'0')),new Decimal(0));const expenses=sum('expense'),wages=sum('payroll','totalCost');return {siteId,expenses:expenses.toFixed(2),wages:wages.toFixed(2),recordedCost:expenses.plus(wages).toFixed(2),supplierInvoices:sum('invoice','amount','payable').toFixed(2),customerInvoices:sum('invoice','amount','receivable').toFixed(2),payments:sum('payment').toFixed(2)};});
+ return {expenses:total('expense').toFixed(2),payments:total('payment').toFixed(2),cashIn:cash('receivable'),cashOut:cash('payable'),projects,invoices:posted.filter(r=>r.kind==='invoice').map(r=>{const paid=posted.filter(p=>p.kind==='payment'&&p.data.invoiceId===r.id).reduce((s,p)=>s.plus(String(p.data.amount)),new Decimal(0));return {id:r.id,title:r.title,direction:r.data.direction,amount:String(r.data.amount),paid:paid.toFixed(2),outstanding:amount(String(r.data.amount)).minus(paid).toFixed(2)};})};
+}
+export const approvalKinds:readonly RecordKind[]=['letter','payroll','invoice','expense','payment','payment_plan','leave'];

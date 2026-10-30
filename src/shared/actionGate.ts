@@ -1,0 +1,1 @@
+export class ActionGate{private running=false;async run<T>(action:()=>Promise<T>):Promise<T|undefined>{if(this.running)return;this.running=true;try{return await action();}finally{this.running=false;}}}

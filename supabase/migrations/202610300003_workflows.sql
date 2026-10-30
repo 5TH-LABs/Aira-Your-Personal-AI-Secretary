@@ -1,0 +1,31 @@
+
+begin;
+alter table notifications add column notice_key text;
+create unique index notification_dedupe on notifications(user_id,notice_key);
+create function scheduled_notice(company uuid,recipient uuid,record_uuid uuid,notice_key text,notice_title text,notice_body text) returns uuid language plpgsql security definer set search_path=public as $$declare n uuid;begin insert into notifications(company_id,user_id,record_id,title,body,notice_key) values(company,recipient,record_uuid,notice_title,notice_body,notice_key) on conflict(user_id,notice_key) do nothing returning id into n;return n;end$$;
+create function start_agent_run(company uuid,operation uuid,request jsonb) returns uuid language plpgsql security definer set search_path=public as $$declare rid uuid;begin
+ if member_role(company) is null then raise exception 'Forbidden';end if;
+ if length(request->>'message') not between 1 and 12000 then raise exception 'Request required';end if;
+ perform pg_advisory_xact_lock(hashtextextended(company::text||auth.uid()::text,8));
+ select id into rid from agent_runs where company_id=company and user_id=auth.uid() and operation_id=operation;if found then return rid;end if;
+ if (select count(*) from agent_runs where company_id=company and user_id=auth.uid() and created_at>now()-interval '1 minute')>=10 then raise exception 'Please wait before starting more agent runs';end if;
+ insert into agent_runs(company_id,user_id,operation_id,status,output) values(company,auth.uid(),operation,'prepared',jsonb_build_object('request',request)) returning id into rid;
+ insert into jobs(company_id,kind,payload,dedupe_key) values(company,'agent',jsonb_build_object('runId',rid),'agent:'||rid::text);return rid;
+end$$;
+create function cancel_agent_run(run_uuid uuid) returns void language plpgsql security definer set search_path=public as $$begin update agent_runs set status='cancelled' where id=run_uuid and user_id=auth.uid() and member_role(company_id) is not null and status in ('prepared','awaiting_approval');end$$;
+create function retry_failed_job(job_uuid uuid) returns void language plpgsql security definer set search_path=public as $$declare j jobs;begin select * into j from jobs where id=job_uuid for update;if not found or coalesce(member_role(j.company_id),'')<>'owner' then raise exception 'Owner access required';end if;if j.status<>'failed' then raise exception 'Only confirmed failures may be retried';end if;update jobs set status='queued',run_after=now(),error=null where id=j.id;update approvals set status='queued' where id=j.approval_id and status='failed';end$$;
+create function reconcile_email(job_uuid uuid,provider_message_id text) returns void language plpgsql security definer set search_path=public as $$declare j jobs;begin select * into j from jobs where id=job_uuid for update;if not found or coalesce(member_role(j.company_id),'')<>'owner' or coalesce(auth.jwt()->>'aal','')<>'aal2' then raise exception 'Verified owner required';end if;if j.kind<>'email' or j.status<>'uncertain' or length(provider_message_id)<1 then raise exception 'Not an uncertain email';end if;update jobs set status='completed',result=jsonb_build_object('id',provider_message_id,'reconciledBy',auth.uid()) where id=j.id;update approvals set status='completed' where id=j.approval_id;insert into audit_events(company_id,user_id,event,detail) values(j.company_id,auth.uid(),'email_reconciled',jsonb_build_object('jobId',j.id,'providerId',provider_message_id));end$$;
+create function add_topup(company uuid,operation uuid,metric_name text,units integer) returns void language plpgsql security definer set search_path=public as $$begin if coalesce(member_role(company),'')<>'owner' or units<=0 then raise exception 'Owner access and positive quantity required';end if;insert into topups(company_id,metric,quantity,operation_id) values(company,metric_name,units,operation) on conflict(operation_id) do nothing;end$$;
+create function member_update(company uuid,member_uuid uuid,new_role text,assigned_sites uuid[],enabled boolean) returns void language plpgsql security definer set search_path=public as $$begin
+ if coalesce(member_role(company),'')<>'owner' or coalesce(auth.jwt()->>'aal','')<>'aal2' then raise exception 'Verified owner access required';end if;
+ if new_role not in ('office_manager','accountant','supervisor','staff') then raise exception 'Invalid staff role';end if;
+ if exists(select 1 from memberships where company_id=company and user_id=member_uuid and role='owner') then raise exception 'Cannot change owner with this action';end if;
+ update memberships set role=new_role,site_ids=assigned_sites,active=enabled where company_id=company and user_id=member_uuid;
+end$$;
+create function mark_notice_read(notice_uuid uuid) returns void language plpgsql security definer set search_path=public as $$begin update notifications set read_at=now() where id=notice_uuid and user_id=auth.uid();end$$;
+-- Source uploads are served only through authorized metadata checks on the API.
+create function cancel_review(approval_uuid uuid) returns void language plpgsql security definer set search_path=public as $$declare a approvals;begin select * into a from approvals where id=approval_uuid for update;if not found or coalesce(member_role(a.company_id),'')<>'owner' then raise exception 'Owner access required';end if;if exists(select 1 from jobs where approval_id=a.id and status in ('running','completed','uncertain')) then raise exception 'Execution already started';end if;update approvals set status='cancelled' where id=a.id;update jobs set status='cancelled',error='Cancelled by owner' where approval_id=a.id and status='queued';end$$;
+revoke all on function scheduled_notice(uuid,uuid,uuid,text,text,text),start_agent_run(uuid,uuid,jsonb),cancel_agent_run(uuid),retry_failed_job(uuid),reconcile_email(uuid,text),add_topup(uuid,uuid,text,integer),member_update(uuid,uuid,text,uuid[],boolean),mark_notice_read(uuid),cancel_review(uuid) from public;
+grant execute on function scheduled_notice(uuid,uuid,uuid,text,text,text) to service_role;
+grant execute on function start_agent_run(uuid,uuid,jsonb),cancel_agent_run(uuid),retry_failed_job(uuid),reconcile_email(uuid,text),add_topup(uuid,uuid,text,integer),member_update(uuid,uuid,text,uuid[],boolean),mark_notice_read(uuid),cancel_review(uuid) to authenticated;
+commit;

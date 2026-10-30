@@ -1,0 +1,21 @@
+import type {RecordKind} from './records';
+export interface AgentDefinition {id:string;name:string;group:'Documents'|'People'|'Money';description:string;kind:RecordKind;fields:{key:string;label:string;required?:boolean;numeric?:boolean}[];legacy?:string}
+const f=(key:string,label:string,required=false,numeric=false)=>({key,label,required,numeric});
+export const agents:AgentDefinition[]=[
+{id:'writer',name:'Letter & email writer',group:'Documents',description:'Prepare a letter or email for review.',kind:'letter',fields:[f('recipient','Recipient email',true),f('body','Message',true)],legacy:'documents'},
+{id:'documents',name:'Document manager',group:'Documents',description:'File and find your company records.',kind:'document',fields:[],legacy:'documents'},
+{id:'contracts',name:'Contract reader',group:'Documents',description:'Track obligations with source references.',kind:'contract',fields:[f('source','Source filename and page',true),f('obligations','Reviewed obligations',true),f('due','Obligation date'),f('penalties','Penalty terms')]},
+{id:'permits',name:'Permits tracker',group:'Documents',description:'Keep permits and insurance dates in view.',kind:'permit',fields:[f('reference','Permit/reference number',true),f('expiry','Expiry date (YYYY-MM-DD)',true),f('issuer','Issuer'),f('notes','Renewal notes')]},
+{id:'reports',name:'Site reports',group:'Documents',description:'Record site progress and daily observations.',kind:'report',fields:[f('date','Report date (YYYY-MM-DD)',true),f('progress','Progress notes',true),f('issues','Issues and next steps')]},
+{id:'tasks',name:'Staff tasks',group:'People',description:'Assign work and follow it through.',kind:'task',fields:[],legacy:'tasks'},
+{id:'team',name:'Team connector',group:'People',description:'Share site plans, announcements and handovers.',kind:'announcement',fields:[f('body','Plan or handover',true),f('dependencies','Dependencies'),f('due','Due date')]},
+{id:'wages',name:'Attendance & wages',group:'People',description:'Capture attendance and prepare wage calculations.',kind:'attendance',fields:[f('staffName','Staff name',true),f('date','Work date (YYYY-MM-DD)',true),f('hours','Regular hours',true,true),f('rate','Hourly rate (Rs.)',true,true),f('overtime','Overtime hours',true,true),f('otRate','Overtime hourly rate (Rs.)',true,true)]},
+{id:'hr',name:'HR records',group:'People',description:'Staff details, leave and statutory reminders.',kind:'staff',fields:[f('name','Full name',true),f('role','Job role',true),f('startDate','Start date'),f('contract','Contract reference'),f('leave','Leave notes'),f('statutory','EPF/ETF reminder notes')]},
+{id:'subcontractors',name:'Subcontractors',group:'People',description:'Track agreements, milestones and payment records.',kind:'subcontract',fields:[f('contractor','Contractor',true),f('milestone','Milestone',true),f('amount','Agreed amount (Rs.)',true,true),f('paid','Recorded paid amount (Rs.)',true,true),f('insuranceExpiry','Insurance expiry'),f('bankReference','Payment reference')]},
+{id:'estimates',name:'Cost calculator',group:'Money',description:'Calculate quantities and prepare estimate lines.',kind:'estimate',fields:[f('unit','Unit',true),f('quantity','Quantity',true,true),f('rate','Unit rate (Rs.)',true,true)]},
+{id:'bills',name:'Bill checker',group:'Money',description:'Compare invoices with delivery records.',kind:'invoice',fields:[],legacy:'bills'},
+{id:'accountant',name:'Accountant',group:'Money',description:'Record costs and track invoice balances.',kind:'expense',fields:[f('counterparty','Supplier or client',true),f('amount','Total amount (Rs.)',true,true),f('paid','Recorded paid amount (Rs.)',true,true),f('reference','Invoice/bank reference',true),f('due','Due date')]},
+{id:'auditor',name:'Auditor',group:'Money',description:'Record evidence and investigate discrepancies.',kind:'finding',fields:[f('source','Source record/reference',true),f('evidence','Evidence and discrepancy',true),f('resolution','Investigation notes')]}
+];
+
+export const agentKinds:Record<string,RecordKind[]>={...Object.fromEntries(agents.map(a=>[a.id,[a.kind]])),personal:['note','meeting','reminder'],wages:['attendance','payroll','wage_policy'],hr:['staff','leave'],estimates:['estimate','rate'],accountant:['expense','invoice','payment','payment_plan'],team:['announcement','task'],bills:['invoice','finding']};

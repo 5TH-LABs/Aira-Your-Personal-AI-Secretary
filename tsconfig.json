@@ -3,6 +3,11 @@
   "compilerOptions": {
     "strict": true,
     "allowJs": true,
-    "checkJs": false
+    "checkJs": false,
+    "allowImportingTsExtensions": true,
+    "types": [
+      "node",
+      "react"
+    ]
   }
 }

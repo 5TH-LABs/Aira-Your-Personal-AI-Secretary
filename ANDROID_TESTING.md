@@ -37,7 +37,7 @@ If a port is already occupied, stop the previous demo terminal with Ctrl+C first
 5. Allow microphone access when requested. Record **Open bills**, stop, review the transcript, then tap **Use request**.
 6. Try **Remind Nimal Silva to check the cement delivery tomorrow at Nugegoda Residence.** Review the proposed task and explicitly approve it.
 
-Record data is local to each device. The emulator and phone each begin with their own sample records. Neither will automatically inherit records entered in the laptop browser.
+The unconfigured device demo has separate sample records on each device. After cloud activation and company sign-in, authorized company records sync across devices. Offline capture stays queued locally until connectivity returns. See CLOUD_SETUP.md for invitations, MFA, server setup and shared-company acceptance.
 
 ## Connection checks
 
@@ -56,3 +56,7 @@ Open the printed `http://<wifi-address>:4184/api/status` address in the phone's 
 For another Windows machine, first ensure at least 32 GB free disk space. Install Android Studio, then use SDK Manager to install Android SDK Platform Tools, Android Emulator, SDK command-line tools and the Android 16/API 36 Google APIs x86_64 image. Create a Pixel 5 device with the exact name and settings above. Set `ANDROID_HOME` to that machine's SDK directory. The launcher resolves this variable before using the standard per-user SDK location.
 
 No standalone APK, app-store upload or iOS simulator is required for this demonstration. The shared iOS bundle is still built as a compatibility check.
+
+## Installed development and preview builds
+
+Expo Go is the immediate laptop/demo target. To test remote push, custom account links and production configuration, link the client EAS project and install its Android development APK as described in CLOUD_SETUP.md. Then run `npm run demo:dev` and `npm run emulator -- --dev-client`. The preview APK uses the deployed HTTPS API and does not require a running Metro server. Physical Android, signed APK and iOS runtime acceptance must be reported separately from this emulator demo.

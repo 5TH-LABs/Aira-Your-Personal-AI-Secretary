@@ -41,3 +41,8 @@ qa/
 # generated native folders
 /ios
 /android
+
+# Private backup files and generated test reports
+.private-backups/
+playwright-report/
+test-results/

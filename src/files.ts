@@ -6,4 +6,18 @@ export async function fileData(uri:string){if(Platform.OS!=='web')return FS.read
 export function blobBase64(blob:Blob){return new Promise<string>((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(String(r.result).split(',')[1]);r.onerror=reject;r.readAsDataURL(blob);});}
 export async function readFile(id:string){if(Platform.OS!=='web')return {uri:FS.documentDirectory+'office/'+id,data:await fileData(FS.documentDirectory+'office/'+id)};const d=await database(),blob=await new Promise<Blob>((resolve,reject)=>{const r=d.transaction('files').objectStore('files').get(id);r.onsuccess=()=>r.result?resolve(r.result):reject(Error('Original file not found on this device.'));r.onerror=()=>reject(r.error);});return {uri:URL.createObjectURL(blob),data:await blobBase64(blob)};}
 export async function readTextFile(id:string){if(Platform.OS!=='web')return FS.readAsStringAsync(FS.documentDirectory+'office/'+id);const {uri}=await readFile(id);try{return await(await fetch(uri)).text();}finally{URL.revokeObjectURL(uri);}}
-export async function shareDoc(doc:any){const data=doc.text?null:await readFile(doc.id);if(Platform.OS==='web'){const blob=doc.text?new Blob([doc.text],{type:'text/plain'}):await(await fetch(data!.uri)).blob();const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=doc.name;a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);return;}let uri=data?.uri;if(doc.text){const target=FS.cacheDirectory+doc.name.replace(/[^\w.-]/g,'_');await FS.writeAsStringAsync(target,doc.text);uri=target;}if(uri&&await Sharing.isAvailableAsync())await Sharing.shareAsync(uri,{mimeType:doc.mime||'text/plain',dialogTitle:doc.name});else throw Error('Sharing is unavailable on this device.');}
+export async function shareDoc(doc:any){
+ let original:{uri:string;data:string}|null=null;
+ try{original=await readFile(doc.id);}catch{if(!doc.text||(doc.mime&&doc.mime!=='text/plain'))throw Error('The original file is unavailable on this device. The extracted text remains visible.');}
+ const filename=doc.name||'Site Office document.txt';
+ if(Platform.OS==='web'){
+  try{const blob=original?await(await fetch(original.uri)).blob():new Blob([doc.text],{type:'text/plain'});const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=filename;a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);}finally{if(original?.uri.startsWith('blob:'))URL.revokeObjectURL(original.uri);}
+  return;
+ }
+ let uri=original?.uri;
+ if(!uri){const target=FS.cacheDirectory+filename.replace(/[^\w.-]/g,'_');await FS.writeAsStringAsync(target,doc.text);uri=target;}
+ if(uri&&await Sharing.isAvailableAsync())await Sharing.shareAsync(uri,{mimeType:doc.mime||'text/plain',dialogTitle:filename});else throw Error('Sharing is unavailable on this device.');
+}
+
+
+export async function removeCachedFile(id:string){if(!/^[a-f0-9-]{36}$/i.test(id))throw Error('Invalid cached file identity.');if(Platform.OS!=='web'){await FS.deleteAsync(FS.documentDirectory+'office/'+id,{idempotent:true});return;}const d=await database();await new Promise<void>((resolve,reject)=>{const t=d.transaction('files','readwrite');t.objectStore('files').delete(id);t.oncomplete=()=>resolve();t.onerror=()=>reject(t.error);});}

@@ -1,0 +1,1 @@
+import {DeviceOfficeProvider} from '../features/office/DeviceOfficeProvider';import {MotionProvider} from '../motion';import {Slot} from 'expo-router';import {WorkspaceProvider} from '../workspace/WorkspaceProvider';export default function Layout(){return <WorkspaceProvider><DeviceOfficeProvider><MotionProvider><Slot/></MotionProvider></DeviceOfficeProvider></WorkspaceProvider>;}
