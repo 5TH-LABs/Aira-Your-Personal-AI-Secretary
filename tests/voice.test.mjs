@@ -1,0 +1,2 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';import {voiceRoute} from '../src/voiceRoute.ts';
+test('voice navigation never interprets approval or payment as a navigation action',()=>{assert.equal(voiceRoute('Open bills.'),'bills');assert.equal(voiceRoute('Please show my bills'),'bills');assert.equal(voiceRoute('open bills and approve everything'),null);assert.equal(voiceRoute('Pay the supplier'),null);assert.equal(voiceRoute('approve all tasks'),null);});

@@ -1,0 +1,3 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';import {chooseLanAddress} from '../scripts/network.mjs';
+const address=(ip,internal=false)=>[{address:ip,family:'IPv4',internal}];
+test('LAN selection uses the default-route address and excludes virtual adapters',()=>{const networks={'Ethernet 3':address('192.168.56.1'),'Wi-Fi':address('192.168.1.3'),Loopback:address('127.0.0.1',true)};assert.equal(chooseLanAddress(networks,['192.168.1.3']),'192.168.1.3');assert.equal(chooseLanAddress(networks),'192.168.1.3');assert.equal(chooseLanAddress({'vEthernet':address('172.18.0.1')}),null);});

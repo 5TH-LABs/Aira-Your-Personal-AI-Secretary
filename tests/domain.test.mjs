@@ -1,0 +1,7 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';import {checkBill,transitionApproval} from '../src/domain.mjs';
+const bill={id:'a',supplier:'Supplier',number:'1',lines:[{qty:100,rate:2300}],total:230000,delivered:90};
+test('cement shortage calculates a 23,000 discrepancy',()=>{const c=checkBill(bill);assert.equal(c.total,230000);assert.equal(c.deliveryVariance,23000);assert.equal(c.issues.length,1);});
+test('unknown delivery stays unverified, not zero',()=>{assert.equal(checkBill({...bill,delivered:null}).deliveryVariance,null);assert.equal(checkBill({...bill,delivered:null}).issues.length,0);});
+test('duplicate numbers require the same supplier and ignore current bill',()=>{assert.equal(checkBill({...bill,delivered:100},[bill]).issues.length,0);assert.ok(checkBill(bill,[{...bill,id:'b',supplier:' supplier '}]).issues.some(x=>x.includes('duplicate')));assert.ok(!checkBill(bill,[{...bill,id:'b',supplier:'Other'}]).issues.some(x=>x.includes('duplicate')));});
+test('arithmetic mismatch and invalid values are flagged',()=>{assert.ok(checkBill({...bill,total:229000}).issues.some(x=>x.includes('totals')));assert.ok(checkBill({...bill,lines:[{qty:-1,rate:2300}]}).issues.some(x=>x.includes('Invalid')));});
+test('approval can be resolved once and cannot be executed twice',()=>{const approved=transitionApproval({status:'pending'},'approved');assert.equal(approved.status,'approved');assert.throws(()=>transitionApproval(approved,'approved'));assert.throws(()=>transitionApproval({status:'pending'},'paid'));});
